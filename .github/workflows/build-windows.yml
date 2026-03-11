@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v4 : FIX via patch direct du fichier mshmet.c d'AdaptTools
+# v5 : FIX syntaxe YAML - patch via printf au lieu de heredoc
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -52,37 +52,19 @@ jobs:
             mingw-w64-x86_64-qt5-tools
             mingw-w64-x86_64-qt5-3d
 
-      # -----------------------------------------------------------------
-      # FIX v4 : on ajoute le pragma directement dans mshmet.c et libmesh5.c
-      # pour désactiver les warnings traités comme erreurs dans ce vieux code C
-      # -----------------------------------------------------------------
       - name: Patch AdaptTools legacy C files
         run: |
-          MSHMET="ASLI/libs/AdaptTools/sources/mshmet/mshmet.c"
-          LIBMESH="ASLI/libs/AdaptTools/sources/commonFiles/libmesh5.c"
+          PRAGMA_BLOCK='#pragma GCC diagnostic ignored "-Wimplicit-function-declaration"\n#pragma GCC diagnostic ignored "-Wint-conversion"\n#pragma GCC diagnostic ignored "-Wstringop-overflow"\n'
 
-          # Ajoute les pragmas en tête de chaque fichier s'ils n'y sont pas déjà
-          for FILE in "$MSHMET" "$LIBMESH"; do
-            if [ -f "$FILE" ]; then
-              # Vérifie si le patch n'est pas déjà appliqué
-              if ! grep -q "Wno-implicit-function-declaration" "$FILE"; then
-                # Prépend les pragmas au fichier
-                TMPFILE=$(mktemp)
-                cat > "$TMPFILE" << 'EOF'
-/* --- Compatibility patch for modern GCC --- */
-#pragma GCC diagnostic ignored "-Wimplicit-function-declaration"
-#pragma GCC diagnostic ignored "-Wint-conversion"
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-/* ----------------------------------------- */
-EOF
-                cat "$FILE" >> "$TMPFILE"
-                mv "$TMPFILE" "$FILE"
-                echo "Patched: $FILE"
-              else
-                echo "Already patched: $FILE"
-              fi
-            else
-              echo "File not found (skipping): $FILE"
+          for FILE in \
+            "ASLI/libs/AdaptTools/sources/mshmet/mshmet.c" \
+            "ASLI/libs/AdaptTools/sources/commonFiles/libmesh5.c"; do
+            if [ -f "$FILE" ] && ! grep -q "Wimplicit-function-declaration" "$FILE"; then
+              TMPFILE=$(mktemp)
+              printf '%b' "$PRAGMA_BLOCK" > "$TMPFILE"
+              cat "$FILE" >> "$TMPFILE"
+              mv "$TMPFILE" "$FILE"
+              echo "Patched: $FILE"
             fi
           done
 
@@ -102,12 +84,10 @@ EOF
           make -j$(nproc)
 
       - name: Verify ASLI.exe
-        run: |
-          ls -lh ASLI/bin/ASLI.exe
+        run: ls -lh ASLI/bin/ASLI.exe
 
       - name: Copy ASLI.exe into QASLI source directory
-        run: |
-          cp ASLI/bin/ASLI.exe QASLI/
+        run: cp ASLI/bin/ASLI.exe QASLI/
 
       - name: Configure QASLI
         run: |
@@ -124,28 +104,23 @@ EOF
           make -j$(nproc)
 
       - name: Verify QASLI.exe
-        run: |
-          ls -lh QASLI/build/QASLI.exe
+        run: ls -lh QASLI/build/QASLI.exe
 
       - name: Assemble final package
         run: |
           mkdir -p package/ASLI_QASLI
-
-          cp ASLI/bin/ASLI.exe          package/ASLI_QASLI/
-          cp QASLI/build/QASLI.exe      package/ASLI_QASLI/
-          cp ASLI/config.yml            package/ASLI_QASLI/
-          cp -r ASLI/inputs             package/ASLI_QASLI/ 2>/dev/null || true
+          cp ASLI/bin/ASLI.exe              package/ASLI_QASLI/
+          cp QASLI/build/QASLI.exe          package/ASLI_QASLI/
+          cp ASLI/config.yml                package/ASLI_QASLI/
+          cp -r ASLI/inputs                 package/ASLI_QASLI/ 2>/dev/null || true
 
           QT_BIN="/mingw64/bin"
-          cp "$QT_BIN/Qt5Core.dll"          package/ASLI_QASLI/
-          cp "$QT_BIN/Qt5Gui.dll"           package/ASLI_QASLI/
-          cp "$QT_BIN/Qt5Widgets.dll"       package/ASLI_QASLI/
-          cp "$QT_BIN/Qt53DCore.dll"        package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/Qt53DRender.dll"      package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/Qt53DExtras.dll"      package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/libgcc_s_seh-1.dll"   package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/libstdc++-6.dll"      package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/libwinpthread-1.dll"  package/ASLI_QASLI/ 2>/dev/null || true
+          for DLL in Qt5Core Qt5Gui Qt5Widgets Qt53DCore Qt53DRender Qt53DExtras; do
+            cp "$QT_BIN/${DLL}.dll" package/ASLI_QASLI/ 2>/dev/null || true
+          done
+          for DLL in libgcc_s_seh-1 libstdc++-6 libwinpthread-1; do
+            cp "$QT_BIN/${DLL}.dll" package/ASLI_QASLI/ 2>/dev/null || true
+          done
 
           echo "--- Package contents ---"
           ls -lh package/ASLI_QASLI/
