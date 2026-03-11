@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v10 : FIX direct du code source de emitterutils.cpp (recherche récursive)
+# v11 : FIX mmg3d CMake version trop ancienne
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -53,12 +53,6 @@ jobs:
             mingw-w64-x86_64-qt5-3d
 
       # -----------------------------------------------------------------
-      # Affiche la structure de libs/ pour diagnostic
-      # -----------------------------------------------------------------
-      - name: Show libs structure
-        run: find ASLI/libs -maxdepth 3 -type d | sort
-
-      # -----------------------------------------------------------------
       # Patch AdaptTools (C legacy)
       # -----------------------------------------------------------------
       - name: Patch AdaptTools legacy C files
@@ -75,33 +69,29 @@ jobs:
           done
 
       # -----------------------------------------------------------------
-      # FIX v10 : patch direct du source emitterutils.cpp
-      # Ajoute #include <cstdint> manquant et corrige GetSurrogatePair
+      # FIX v11 : mmg3d a un CMakeLists.txt trop ancien (< 3.5)
+      # On met à jour le VERSION minimum dans tous les CMakeLists de mmg
       # -----------------------------------------------------------------
-      - name: Patch emitterutils.cpp (fix uint32_t + surrogatePair)
+      - name: Patch mmg3d CMakeLists.txt version
         run: |
-          FILE=$(find ASLI/libs -name "emitterutils.cpp" 2>/dev/null | head -1)
-          if [ -z "$FILE" ]; then
-            echo "emitterutils.cpp not found — skipping"
-          else
-            echo "Found: $FILE"
-            # Ajoute #include <cstdint> si manquant
-            if ! grep -q "cstdint" "$FILE"; then
-              TMP=$(mktemp)
-              printf '#include <cstdint>\n' > "$TMP"
-              cat "$FILE" >> "$TMP"
-              mv "$TMP" "$FILE"
-              echo "Added cstdint include"
-            fi
-            # Corrige GetSurrogatePair : retourne struct au lieu de int
-            # La fonction doit retourner std::pair<uint32_t,uint32_t>
-            # On utilise sed pour remplacer le type de retour
-            sed -i 's/static int GetSurrogatePair/static std::pair<uint32_t,uint32_t> GetSurrogatePair/g' "$FILE"
-            # Corrige l'appel .first et .second si surrogatePair est int
-            sed -i 's/int surrogatePair = GetSurrogatePair/auto surrogatePair = GetSurrogatePair/g' "$FILE"
-            echo "Patched GetSurrogatePair in $FILE"
-          fi
+          find ASLI/libs/mmg -name "CMakeLists.txt" 2>/dev/null | while read FILE; do
+            # Remplace cmake_minimum_required VERSION < 3.5 par 3.5
+            sed -i 's/cmake_minimum_required\s*(VERSION\s*[0-9]\.[0-9]*)/cmake_minimum_required(VERSION 3.5)/gI' "$FILE"
+            echo "Patched CMake version in: $FILE"
+          done
 
+          # Aussi patcher le CMakeLists principal d'ASLI si nécessaire
+          find ASLI/libs -name "CMakeLists.txt" -exec grep -l "cmake_minimum_required" {} \; | while read FILE; do
+            if grep -qi "VERSION [0-2]\." "$FILE"; then
+              sed -i 's/cmake_minimum_required\s*(VERSION\s*[0-2]\.[0-9.]*)/cmake_minimum_required(VERSION 3.5)/gI' "$FILE"
+              echo "Patched old CMake version in: $FILE"
+            fi
+          done
+
+      # -----------------------------------------------------------------
+      # FIX v11 : passe CMAKE_POLICY_VERSION_MINIMUM aux sous-projets
+      # via la variable d'environnement CMAKE_ARGS
+      # -----------------------------------------------------------------
       - name: Configure ASLI
         run: |
           export CFLAGS="-w"
@@ -114,6 +104,7 @@ jobs:
                 -DMARCH_NATIVE=OFF \
                 -DCMAKE_C_FLAGS="-w" \
                 -DCMAKE_CXX_FLAGS="-w" \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
                 ..
 
       - name: Build ASLI
