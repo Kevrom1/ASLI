@@ -9,7 +9,7 @@ name: Build ASLI + QASLI (Windows GUI)
 on:
   push:
     branches: [ master, main ]
-  workflow_dispatch:             # Lancement manuel depuis l'onglet Actions
+  workflow_dispatch:
 
 jobs:
   build-windows-gui:
@@ -41,7 +41,8 @@ jobs:
           path: QASLI
 
       # -----------------------------------------------------------------
-      # 3. Installe MSYS2 + toutes les dépendances (ASLI + Qt pour QASLI)
+      # 3. Installe MSYS2 + toutes les dépendances
+      #    FIX: intel-tbb renommé en tbb dans les dépôts MSYS2 récents
       # -----------------------------------------------------------------
       - name: Setup MSYS2 with all dependencies
         uses: msys2/setup-msys2@v2
@@ -55,7 +56,7 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-toolchain
             mingw-w64-x86_64-boost
-            mingw-w64-x86_64-intel-tbb
+            mingw-w64-x86_64-tbb
             mingw-w64-x86_64-gmp
             mingw-w64-x86_64-mpfr
             mingw-w64-x86_64-qt5-base
@@ -86,7 +87,6 @@ jobs:
 
       # -----------------------------------------------------------------
       # 5. Place ASLI.exe dans le dossier source de QASLI
-      #    (requis par QASLI pour fonctionner)
       # -----------------------------------------------------------------
       - name: Copy ASLI.exe into QASLI source directory
         run: |
@@ -115,21 +115,17 @@ jobs:
 
       # -----------------------------------------------------------------
       # 7. Assemble le package final
-      #    Un seul dossier avec tout ce qu'il faut pour lancer l'outil
       # -----------------------------------------------------------------
       - name: Assemble final package
         run: |
           mkdir -p package/ASLI_QASLI
 
-          # Les deux executables
           cp ASLI/bin/ASLI.exe          package/ASLI_QASLI/
           cp QASLI/build/QASLI.exe      package/ASLI_QASLI/
-
-          # Config exemple et dossier inputs
           cp ASLI/config.yml            package/ASLI_QASLI/
           cp -r ASLI/inputs             package/ASLI_QASLI/ 2>/dev/null || true
 
-          # DLLs Qt nécessaires pour que QASLI.exe fonctionne sans Qt installé
+          # DLLs Qt
           QT_BIN="/mingw64/bin"
           cp "$QT_BIN/Qt5Core.dll"      package/ASLI_QASLI/
           cp "$QT_BIN/Qt5Gui.dll"       package/ASLI_QASLI/
