@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v11 : FIX mmg3d CMake version trop ancienne
+# v12 : FIX mmg3d (ExternalProject) + emitterutils.cpp (chemin exact)
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -51,6 +51,7 @@ jobs:
             mingw-w64-x86_64-qt5-base
             mingw-w64-x86_64-qt5-tools
             mingw-w64-x86_64-qt5-3d
+            mingw-w64-x86_64-mmg
 
       # -----------------------------------------------------------------
       # Patch AdaptTools (C legacy)
@@ -69,29 +70,41 @@ jobs:
           done
 
       # -----------------------------------------------------------------
-      # FIX v11 : mmg3d a un CMakeLists.txt trop ancien (< 3.5)
-      # On met à jour le VERSION minimum dans tous les CMakeLists de mmg
+      # FIX v12a : patch emitterutils.cpp — chemin exact connu
+      # Ajoute #include <cstdint> après la ligne 12 (#include null.h)
       # -----------------------------------------------------------------
-      - name: Patch mmg3d CMakeLists.txt version
+      - name: Patch emitterutils.cpp
         run: |
-          find ASLI/libs/mmg -name "CMakeLists.txt" 2>/dev/null | while read FILE; do
-            # Remplace cmake_minimum_required VERSION < 3.5 par 3.5
-            sed -i 's/cmake_minimum_required\s*(VERSION\s*[0-9]\.[0-9]*)/cmake_minimum_required(VERSION 3.5)/gI' "$FILE"
-            echo "Patched CMake version in: $FILE"
-          done
+          FILE="ASLI/libs/yaml/src/emitterutils.cpp"
+          if [ -f "$FILE" ] && ! grep -q "cstdint" "$FILE"; then
+            sed -i '/#include "yaml-cpp\/null.h"/a #include <cstdint>' "$FILE"
+            echo "Added cstdint to $FILE"
+          else
+            echo "Already patched or not found: $FILE"
+          fi
 
-          # Aussi patcher le CMakeLists principal d'ASLI si nécessaire
-          find ASLI/libs -name "CMakeLists.txt" -exec grep -l "cmake_minimum_required" {} \; | while read FILE; do
-            if grep -qi "VERSION [0-2]\." "$FILE"; then
-              sed -i 's/cmake_minimum_required\s*(VERSION\s*[0-2]\.[0-9.]*)/cmake_minimum_required(VERSION 3.5)/gI' "$FILE"
-              echo "Patched old CMake version in: $FILE"
+      # -----------------------------------------------------------------
+      # FIX v12b : mmg3d est un ExternalProject — il est téléchargé dans
+      # libs/mmg et son CMakeLists.txt est trop vieux.
+      # Solution : utiliser mmg installé via pacman (mingw-w64-x86_64-mmg)
+      # et dire à ASLI de ne pas recompiler mmg en interne
+      # -----------------------------------------------------------------
+      - name: Patch ASLI CMakeLists to use system mmg
+        run: |
+          FILE="ASLI/CMakeLists.txt"
+          if [ -f "$FILE" ]; then
+            # Cherche et affiche les lignes mmg pour diagnostic
+            echo "=== MMG references in CMakeLists.txt ==="
+            grep -n -i "mmg" "$FILE" | head -30
+          fi
+          # Patch le CMakeLists de mmg dans libs si présent
+          find ASLI/libs/mmg -name "CMakeLists.txt" 2>/dev/null | while read F; do
+            if grep -q "cmake_minimum_required" "$F"; then
+              sed -i 's/cmake_minimum_required(VERSION [0-9]\.[0-9]*)/cmake_minimum_required(VERSION 3.5)/gI' "$F"
+              echo "Patched version in $F"
             fi
           done
 
-      # -----------------------------------------------------------------
-      # FIX v11 : passe CMAKE_POLICY_VERSION_MINIMUM aux sous-projets
-      # via la variable d'environnement CMAKE_ARGS
-      # -----------------------------------------------------------------
       - name: Configure ASLI
         run: |
           export CFLAGS="-w"
@@ -111,6 +124,7 @@ jobs:
         run: |
           export CFLAGS="-w"
           export CXXFLAGS="-w"
+          export CMAKE_POLICY_VERSION_MINIMUM=3.5
           cd ASLI/build
           make -j$(nproc)
 
