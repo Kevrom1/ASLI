@@ -1,0 +1,157 @@
+# =============================================================================
+# GitHub Actions — Build ASLI + QASLI on Windows
+# Produit un dossier zippé contenant ASLI.exe + QASLI.exe prêts à l'emploi
+# Place ce fichier à : .github/workflows/build-windows-gui.yml
+# =============================================================================
+
+name: Build ASLI + QASLI (Windows GUI)
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:             # Lancement manuel depuis l'onglet Actions
+
+jobs:
+  build-windows-gui:
+    name: Compile ASLI.exe + QASLI.exe
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+
+      # -----------------------------------------------------------------
+      # 1. Récupère ton fork ASLI (avec tes TPMS modifiés)
+      # -----------------------------------------------------------------
+      - name: Checkout ASLI (ton fork)
+        uses: actions/checkout@v4
+        with:
+          path: ASLI
+          submodules: recursive
+
+      # -----------------------------------------------------------------
+      # 2. Récupère QASLI (repo officiel)
+      # -----------------------------------------------------------------
+      - name: Checkout QASLI
+        uses: actions/checkout@v4
+        with:
+          repository: tpms-lattice/QASLI
+          path: QASLI
+
+      # -----------------------------------------------------------------
+      # 3. Installe MSYS2 + toutes les dépendances (ASLI + Qt pour QASLI)
+      # -----------------------------------------------------------------
+      - name: Setup MSYS2 with all dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            cmake
+            make
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-intel-tbb
+            mingw-w64-x86_64-gmp
+            mingw-w64-x86_64-mpfr
+            mingw-w64-x86_64-qt5-base
+            mingw-w64-x86_64-qt5-tools
+            mingw-w64-x86_64-qt5-3d
+
+      # -----------------------------------------------------------------
+      # 4. Compile ASLI
+      # -----------------------------------------------------------------
+      - name: Configure ASLI
+        run: |
+          cd ASLI
+          mkdir -p build
+          cd build
+          cmake -G "MSYS Makefiles" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DMARCH_NATIVE=OFF \
+                ..
+
+      - name: Build ASLI
+        run: |
+          cd ASLI/build
+          make -j$(nproc)
+
+      - name: Verify ASLI.exe
+        run: |
+          ls -lh ASLI/bin/ASLI.exe
+
+      # -----------------------------------------------------------------
+      # 5. Place ASLI.exe dans le dossier source de QASLI
+      #    (requis par QASLI pour fonctionner)
+      # -----------------------------------------------------------------
+      - name: Copy ASLI.exe into QASLI source directory
+        run: |
+          cp ASLI/bin/ASLI.exe QASLI/
+
+      # -----------------------------------------------------------------
+      # 6. Compile QASLI
+      # -----------------------------------------------------------------
+      - name: Configure QASLI
+        run: |
+          cd QASLI
+          mkdir -p build
+          cd build
+          cmake -G "MSYS Makefiles" \
+                -DCMAKE_BUILD_TYPE=Release \
+                ..
+
+      - name: Build QASLI
+        run: |
+          cd QASLI/build
+          make -j$(nproc)
+
+      - name: Verify QASLI.exe
+        run: |
+          ls -lh QASLI/build/QASLI.exe
+
+      # -----------------------------------------------------------------
+      # 7. Assemble le package final
+      #    Un seul dossier avec tout ce qu'il faut pour lancer l'outil
+      # -----------------------------------------------------------------
+      - name: Assemble final package
+        run: |
+          mkdir -p package/ASLI_QASLI
+
+          # Les deux executables
+          cp ASLI/bin/ASLI.exe          package/ASLI_QASLI/
+          cp QASLI/build/QASLI.exe      package/ASLI_QASLI/
+
+          # Config exemple et dossier inputs
+          cp ASLI/config.yml            package/ASLI_QASLI/
+          cp -r ASLI/inputs             package/ASLI_QASLI/ 2>/dev/null || true
+
+          # DLLs Qt nécessaires pour que QASLI.exe fonctionne sans Qt installé
+          QT_BIN="/mingw64/bin"
+          cp "$QT_BIN/Qt5Core.dll"      package/ASLI_QASLI/
+          cp "$QT_BIN/Qt5Gui.dll"       package/ASLI_QASLI/
+          cp "$QT_BIN/Qt5Widgets.dll"   package/ASLI_QASLI/
+          cp "$QT_BIN/Qt53DCore.dll"    package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/Qt53DRender.dll"  package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/Qt53DExtras.dll"  package/ASLI_QASLI/ 2>/dev/null || true
+
+          # DLLs runtime MinGW
+          cp "$QT_BIN/libgcc_s_seh-1.dll"   package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/libstdc++-6.dll"       package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/libwinpthread-1.dll"   package/ASLI_QASLI/ 2>/dev/null || true
+
+          echo "--- Package contents ---"
+          ls -lh package/ASLI_QASLI/
+
+      # -----------------------------------------------------------------
+      # 8. Publie le package comme artifact téléchargeable
+      # -----------------------------------------------------------------
+      - name: Upload complete package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASLI-QASLI-windows-package
+          path: package/ASLI_QASLI/
+          retention-days: 30
