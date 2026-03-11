@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v9 : FIX syntaxe YAML — aucun heredoc, tout via printf/echo
+# v10 : FIX direct du code source de emitterutils.cpp (recherche récursive)
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -51,8 +51,16 @@ jobs:
             mingw-w64-x86_64-qt5-base
             mingw-w64-x86_64-qt5-tools
             mingw-w64-x86_64-qt5-3d
-            mingw-w64-x86_64-yaml-cpp
 
+      # -----------------------------------------------------------------
+      # Affiche la structure de libs/ pour diagnostic
+      # -----------------------------------------------------------------
+      - name: Show libs structure
+        run: find ASLI/libs -maxdepth 3 -type d | sort
+
+      # -----------------------------------------------------------------
+      # Patch AdaptTools (C legacy)
+      # -----------------------------------------------------------------
       - name: Patch AdaptTools legacy C files
         run: |
           P='#pragma GCC diagnostic ignored "-Wimplicit-function-declaration"\n#pragma GCC diagnostic ignored "-Wint-conversion"\n#pragma GCC diagnostic ignored "-Wstringop-overflow"\n'
@@ -66,24 +74,33 @@ jobs:
             fi
           done
 
-      - name: Replace internal yaml-cpp with system version
+      # -----------------------------------------------------------------
+      # FIX v10 : patch direct du source emitterutils.cpp
+      # Ajoute #include <cstdint> manquant et corrige GetSurrogatePair
+      # -----------------------------------------------------------------
+      - name: Patch emitterutils.cpp (fix uint32_t + surrogatePair)
         run: |
-          for DIR in "ASLI/libs/yaml" "ASLI/libs/yaml-cpp"; do
-            if [ -d "$DIR" ]; then
-              echo "Found yaml at: $DIR"
+          FILE=$(find ASLI/libs -name "emitterutils.cpp" 2>/dev/null | head -1)
+          if [ -z "$FILE" ]; then
+            echo "emitterutils.cpp not found — skipping"
+          else
+            echo "Found: $FILE"
+            # Ajoute #include <cstdint> si manquant
+            if ! grep -q "cstdint" "$FILE"; then
               TMP=$(mktemp)
-              printf 'cmake_minimum_required(VERSION 3.10)\n' > "$TMP"
-              printf 'project(yaml-cpp-stub)\n' >> "$TMP"
-              printf 'find_package(yaml-cpp REQUIRED)\n' >> "$TMP"
-              printf 'if(NOT TARGET yaml-cpp)\n' >> "$TMP"
-              printf '  add_library(yaml-cpp INTERFACE)\n' >> "$TMP"
-              printf '  target_link_libraries(yaml-cpp INTERFACE yaml-cpp::yaml-cpp)\n' >> "$TMP"
-              printf 'endif()\n' >> "$TMP"
-              mv "$TMP" "$DIR/CMakeLists.txt"
-              echo "Replaced CMakeLists.txt in $DIR"
-              break
+              printf '#include <cstdint>\n' > "$TMP"
+              cat "$FILE" >> "$TMP"
+              mv "$TMP" "$FILE"
+              echo "Added cstdint include"
             fi
-          done
+            # Corrige GetSurrogatePair : retourne struct au lieu de int
+            # La fonction doit retourner std::pair<uint32_t,uint32_t>
+            # On utilise sed pour remplacer le type de retour
+            sed -i 's/static int GetSurrogatePair/static std::pair<uint32_t,uint32_t> GetSurrogatePair/g' "$FILE"
+            # Corrige l'appel .first et .second si surrogatePair est int
+            sed -i 's/int surrogatePair = GetSurrogatePair/auto surrogatePair = GetSurrogatePair/g' "$FILE"
+            echo "Patched GetSurrogatePair in $FILE"
+          fi
 
       - name: Configure ASLI
         run: |
