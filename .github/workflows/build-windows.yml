@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v8 : FIX yaml-cpp — remplace la version interne cassée par la version système
+# v9 : FIX syntaxe YAML — aucun heredoc, tout via printf/echo
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -53,61 +53,37 @@ jobs:
             mingw-w64-x86_64-qt5-3d
             mingw-w64-x86_64-yaml-cpp
 
-      # -----------------------------------------------------------------
-      # Patch AdaptTools (C legacy)
-      # -----------------------------------------------------------------
       - name: Patch AdaptTools legacy C files
         run: |
-          PRAGMA_C='#pragma GCC diagnostic ignored "-Wimplicit-function-declaration"\n#pragma GCC diagnostic ignored "-Wint-conversion"\n#pragma GCC diagnostic ignored "-Wstringop-overflow"\n'
-          for FILE in \
-            "ASLI/libs/AdaptTools/sources/mshmet/mshmet.c" \
-            "ASLI/libs/AdaptTools/sources/commonFiles/libmesh5.c"; do
+          P='#pragma GCC diagnostic ignored "-Wimplicit-function-declaration"\n#pragma GCC diagnostic ignored "-Wint-conversion"\n#pragma GCC diagnostic ignored "-Wstringop-overflow"\n'
+          for FILE in "ASLI/libs/AdaptTools/sources/mshmet/mshmet.c" "ASLI/libs/AdaptTools/sources/commonFiles/libmesh5.c"; do
             if [ -f "$FILE" ] && ! grep -q "Wimplicit-function-declaration" "$FILE"; then
               TMP=$(mktemp)
-              printf '%b' "$PRAGMA_C" > "$TMP"
+              printf '%b' "$P" > "$TMP"
               cat "$FILE" >> "$TMP"
               mv "$TMP" "$FILE"
               echo "Patched: $FILE"
             fi
           done
 
-      # -----------------------------------------------------------------
-      # FIX v8 : supprime le yaml-cpp interne d'ASLI et le remplace
-      # par un stub CMake qui pointe vers la version système (pacman)
-      # Le yaml-cpp système est à jour et compile sans erreur
-      # -----------------------------------------------------------------
       - name: Replace internal yaml-cpp with system version
         run: |
-          YAML_DIR="ASLI/libs/yaml"
-
-          # Trouve le dossier yaml-cpp interne (yaml ou yaml-cpp)
           for DIR in "ASLI/libs/yaml" "ASLI/libs/yaml-cpp"; do
             if [ -d "$DIR" ]; then
-              YAML_DIR="$DIR"
-              echo "Found yaml-cpp at: $DIR"
+              echo "Found yaml at: $DIR"
+              TMP=$(mktemp)
+              printf 'cmake_minimum_required(VERSION 3.10)\n' > "$TMP"
+              printf 'project(yaml-cpp-stub)\n' >> "$TMP"
+              printf 'find_package(yaml-cpp REQUIRED)\n' >> "$TMP"
+              printf 'if(NOT TARGET yaml-cpp)\n' >> "$TMP"
+              printf '  add_library(yaml-cpp INTERFACE)\n' >> "$TMP"
+              printf '  target_link_libraries(yaml-cpp INTERFACE yaml-cpp::yaml-cpp)\n' >> "$TMP"
+              printf 'endif()\n' >> "$TMP"
+              mv "$TMP" "$DIR/CMakeLists.txt"
+              echo "Replaced CMakeLists.txt in $DIR"
               break
             fi
           done
-
-          if [ -d "$YAML_DIR" ]; then
-            # Sauvegarde le CMakeLists.txt original
-            cp "$YAML_DIR/CMakeLists.txt" "$YAML_DIR/CMakeLists.txt.bak" 2>/dev/null || true
-
-            # Remplace par un stub qui utilise find_package (version système)
-            cat > "$YAML_DIR/CMakeLists.txt" << 'STUBEOF'
-# Stub: redirect to system yaml-cpp installed via pacman
-cmake_minimum_required(VERSION 3.10)
-project(yaml-cpp-stub)
-find_package(yaml-cpp REQUIRED)
-if(NOT TARGET yaml-cpp)
-  add_library(yaml-cpp INTERFACE)
-  target_link_libraries(yaml-cpp INTERFACE yaml-cpp::yaml-cpp)
-endif()
-STUBEOF
-            echo "Replaced yaml-cpp CMakeLists.txt with system stub"
-          else
-            echo "yaml-cpp directory not found — skipping replacement"
-          fi
 
       - name: Configure ASLI
         run: |
