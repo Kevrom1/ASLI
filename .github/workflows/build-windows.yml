@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v3 : FIX implicit-function-declaration error in AdaptTools (legacy C code)
+# v4 : FIX via patch direct du fichier mshmet.c d'AdaptTools
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -53,10 +53,39 @@ jobs:
             mingw-w64-x86_64-qt5-3d
 
       # -----------------------------------------------------------------
-      # FIX v3 : -Wno-implicit-function-declaration désactive l'erreur
-      # dans le vieux code C de AdaptTools/mshmet (bibliothèque interne)
-      # -DCMAKE_C_FLAGS passe le flag à TOUS les fichiers C du projet
+      # FIX v4 : on ajoute le pragma directement dans mshmet.c et libmesh5.c
+      # pour désactiver les warnings traités comme erreurs dans ce vieux code C
       # -----------------------------------------------------------------
+      - name: Patch AdaptTools legacy C files
+        run: |
+          MSHMET="ASLI/libs/AdaptTools/sources/mshmet/mshmet.c"
+          LIBMESH="ASLI/libs/AdaptTools/sources/commonFiles/libmesh5.c"
+
+          # Ajoute les pragmas en tête de chaque fichier s'ils n'y sont pas déjà
+          for FILE in "$MSHMET" "$LIBMESH"; do
+            if [ -f "$FILE" ]; then
+              # Vérifie si le patch n'est pas déjà appliqué
+              if ! grep -q "Wno-implicit-function-declaration" "$FILE"; then
+                # Prépend les pragmas au fichier
+                TMPFILE=$(mktemp)
+                cat > "$TMPFILE" << 'EOF'
+/* --- Compatibility patch for modern GCC --- */
+#pragma GCC diagnostic ignored "-Wimplicit-function-declaration"
+#pragma GCC diagnostic ignored "-Wint-conversion"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+/* ----------------------------------------- */
+EOF
+                cat "$FILE" >> "$TMPFILE"
+                mv "$TMPFILE" "$FILE"
+                echo "Patched: $FILE"
+              else
+                echo "Already patched: $FILE"
+              fi
+            else
+              echo "File not found (skipping): $FILE"
+            fi
+          done
+
       - name: Configure ASLI
         run: |
           cd ASLI
@@ -65,8 +94,6 @@ jobs:
           cmake -G "MSYS Makefiles" \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DMARCH_NATIVE=OFF \
-                -DCMAKE_C_FLAGS="-Wno-implicit-function-declaration -Wno-int-conversion" \
-                -DCMAKE_CXX_FLAGS="-Wno-implicit-function-declaration" \
                 ..
 
       - name: Build ASLI
