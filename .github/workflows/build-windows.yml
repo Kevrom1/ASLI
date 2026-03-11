@@ -1,7 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# Produit un dossier zippé contenant ASLI.exe + QASLI.exe prêts à l'emploi
-# Place ce fichier à : .github/workflows/build-windows-gui.yml
+# v3 : FIX implicit-function-declaration error in AdaptTools (legacy C code)
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -22,28 +21,18 @@ jobs:
 
     steps:
 
-      # -----------------------------------------------------------------
-      # 1. Récupère ton fork ASLI (avec tes TPMS modifiés)
-      # -----------------------------------------------------------------
       - name: Checkout ASLI (ton fork)
         uses: actions/checkout@v4
         with:
           path: ASLI
           submodules: recursive
 
-      # -----------------------------------------------------------------
-      # 2. Récupère QASLI (repo officiel)
-      # -----------------------------------------------------------------
       - name: Checkout QASLI
         uses: actions/checkout@v4
         with:
           repository: tpms-lattice/QASLI
           path: QASLI
 
-      # -----------------------------------------------------------------
-      # 3. Installe MSYS2 + toutes les dépendances
-      #    FIX: intel-tbb renommé en tbb dans les dépôts MSYS2 récents
-      # -----------------------------------------------------------------
       - name: Setup MSYS2 with all dependencies
         uses: msys2/setup-msys2@v2
         with:
@@ -64,7 +53,9 @@ jobs:
             mingw-w64-x86_64-qt5-3d
 
       # -----------------------------------------------------------------
-      # 4. Compile ASLI
+      # FIX v3 : -Wno-implicit-function-declaration désactive l'erreur
+      # dans le vieux code C de AdaptTools/mshmet (bibliothèque interne)
+      # -DCMAKE_C_FLAGS passe le flag à TOUS les fichiers C du projet
       # -----------------------------------------------------------------
       - name: Configure ASLI
         run: |
@@ -74,6 +65,8 @@ jobs:
           cmake -G "MSYS Makefiles" \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DMARCH_NATIVE=OFF \
+                -DCMAKE_C_FLAGS="-Wno-implicit-function-declaration -Wno-int-conversion" \
+                -DCMAKE_CXX_FLAGS="-Wno-implicit-function-declaration" \
                 ..
 
       - name: Build ASLI
@@ -85,16 +78,10 @@ jobs:
         run: |
           ls -lh ASLI/bin/ASLI.exe
 
-      # -----------------------------------------------------------------
-      # 5. Place ASLI.exe dans le dossier source de QASLI
-      # -----------------------------------------------------------------
       - name: Copy ASLI.exe into QASLI source directory
         run: |
           cp ASLI/bin/ASLI.exe QASLI/
 
-      # -----------------------------------------------------------------
-      # 6. Compile QASLI
-      # -----------------------------------------------------------------
       - name: Configure QASLI
         run: |
           cd QASLI
@@ -113,9 +100,6 @@ jobs:
         run: |
           ls -lh QASLI/build/QASLI.exe
 
-      # -----------------------------------------------------------------
-      # 7. Assemble le package final
-      # -----------------------------------------------------------------
       - name: Assemble final package
         run: |
           mkdir -p package/ASLI_QASLI
@@ -125,26 +109,20 @@ jobs:
           cp ASLI/config.yml            package/ASLI_QASLI/
           cp -r ASLI/inputs             package/ASLI_QASLI/ 2>/dev/null || true
 
-          # DLLs Qt
           QT_BIN="/mingw64/bin"
-          cp "$QT_BIN/Qt5Core.dll"      package/ASLI_QASLI/
-          cp "$QT_BIN/Qt5Gui.dll"       package/ASLI_QASLI/
-          cp "$QT_BIN/Qt5Widgets.dll"   package/ASLI_QASLI/
-          cp "$QT_BIN/Qt53DCore.dll"    package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/Qt53DRender.dll"  package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/Qt53DExtras.dll"  package/ASLI_QASLI/ 2>/dev/null || true
-
-          # DLLs runtime MinGW
+          cp "$QT_BIN/Qt5Core.dll"          package/ASLI_QASLI/
+          cp "$QT_BIN/Qt5Gui.dll"           package/ASLI_QASLI/
+          cp "$QT_BIN/Qt5Widgets.dll"       package/ASLI_QASLI/
+          cp "$QT_BIN/Qt53DCore.dll"        package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/Qt53DRender.dll"      package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/Qt53DExtras.dll"      package/ASLI_QASLI/ 2>/dev/null || true
           cp "$QT_BIN/libgcc_s_seh-1.dll"   package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/libstdc++-6.dll"       package/ASLI_QASLI/ 2>/dev/null || true
-          cp "$QT_BIN/libwinpthread-1.dll"   package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/libstdc++-6.dll"      package/ASLI_QASLI/ 2>/dev/null || true
+          cp "$QT_BIN/libwinpthread-1.dll"  package/ASLI_QASLI/ 2>/dev/null || true
 
           echo "--- Package contents ---"
           ls -lh package/ASLI_QASLI/
 
-      # -----------------------------------------------------------------
-      # 8. Publie le package comme artifact téléchargeable
-      # -----------------------------------------------------------------
       - name: Upload complete package
         uses: actions/upload-artifact@v4
         with:
