@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v13 : FIX mmg3d — patch ExternalProject_Add dans CMakeLists.txt d'ASLI
+# v14 : FIX mmg3d — patch chirurgical ligne 126 via Python (pas de sed)
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -51,6 +51,7 @@ jobs:
             mingw-w64-x86_64-qt5-base
             mingw-w64-x86_64-qt5-tools
             mingw-w64-x86_64-qt5-3d
+            mingw-w64-x86_64-python
 
       # -----------------------------------------------------------------
       # Patch AdaptTools (C legacy)
@@ -69,48 +70,61 @@ jobs:
           done
 
       # -----------------------------------------------------------------
-      # Patch emitterutils.cpp — ajoute #include <cstdint>
+      # Patch emitterutils.cpp
       # -----------------------------------------------------------------
       - name: Patch emitterutils.cpp
         run: |
           FILE="ASLI/libs/yaml/src/emitterutils.cpp"
           if [ -f "$FILE" ] && ! grep -q "cstdint" "$FILE"; then
-            sed -i '/#include "yaml-cpp\/null.h"/a #include <cstdint>' "$FILE"
+            sed -i 's|#include "yaml-cpp/null.h"|#include "yaml-cpp/null.h"\n#include <cstdint>|' "$FILE"
             echo "Patched: $FILE"
           fi
 
       # -----------------------------------------------------------------
-      # FIX v13 : patch le CMakeLists.txt principal d'ASLI pour injecter
-      # CMAKE_POLICY_VERSION_MINIMUM dans le ExternalProject mmg3d
-      # On cherche la ligne CMAKE_ARGS de mmg3d et on y ajoute le flag
+      # FIX v14 : patch CMakeLists.txt via Python pour éviter les
+      # problèmes d'échappement sed avec les parenthèses
+      # On ajoute -DCMAKE_POLICY_VERSION_MINIMUM=3.5 à la ligne mmg3d
       # -----------------------------------------------------------------
-      - name: Patch ASLI CMakeLists.txt to fix mmg3d ExternalProject
+      - name: Patch mmg3d ExternalProject via Python
         run: |
-          FILE="ASLI/CMakeLists.txt"
-          echo "=== Searching mmg references ==="
-          grep -n "mmg\|ExternalProject\|CMAKE_ARGS" "$FILE" | head -40
+          python3 - << 'PYEOF'
+          import re
 
-          # Ajoute CMAKE_POLICY_VERSION_MINIMUM=3.5 aux CMAKE_ARGS de mmg3d
-          # Le pattern cherche la ligne CMAKE_ARGS dans le bloc mmg3d
-          sed -i '/ExternalProject_Add.*mmg3d/,/\)/{
-            s/CMAKE_ARGS/CMAKE_ARGS -DCMAKE_POLICY_VERSION_MINIMUM=3.5/
-          }' "$FILE"
+          filepath = "ASLI/CMakeLists.txt"
+          with open(filepath, "r") as f:
+              content = f.read()
 
-          # Alternative : cherche directement la ligne avec les args cmake de mmg
-          # et insère le flag après CMAKE_ARGS
-          if ! grep -q "POLICY_VERSION_MINIMUM" "$FILE"; then
-            sed -i 's/-DMMG_RELOCATABLE_INSTALL=ON/-DMMG_RELOCATABLE_INSTALL=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5/g' "$FILE"
-            echo "Patched via RELOCATABLE flag line"
-          fi
+          old = "-DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D"
+          new = "-DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_MMG3D"
 
-          echo "=== After patch ==="
-          grep -n "POLICY_VERSION\|CMAKE_ARGS\|mmg" "$FILE" | head -20
+          if old in content:
+              content = content.replace(old, new, 1)
+              with open(filepath, "w") as f:
+                  f.write(content)
+              print("SUCCESS: Patched mmg3d CMAKE_ARGS in CMakeLists.txt")
+          else:
+              print("WARNING: Pattern not found, trying fallback...")
+              # Fallback: cherche CMAKE_ARGS dans le bloc mmg3d
+              old2 = "CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D"
+              new2 = "CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_MMG3D"
+              if old2 in content:
+                  content = content.replace(old2, new2, 1)
+                  with open(filepath, "w") as f:
+                      f.write(content)
+                  print("SUCCESS: Patched via fallback")
+              else:
+                  print("ERROR: Could not find mmg3d CMAKE_ARGS pattern")
+                  # Affiche les lignes autour de mmg3d pour debug
+                  lines = content.split('\n')
+                  for i, line in enumerate(lines):
+                      if 'mmg3d' in line.lower() or 'CMAKE_ARGS' in line:
+                          print(f"  Line {i+1}: {line}")
+          PYEOF
 
       - name: Configure ASLI
         run: |
           export CFLAGS="-w"
           export CXXFLAGS="-w"
-          export CMAKE_POLICY_VERSION_MINIMUM=3.5
           cd ASLI
           mkdir -p build
           cd build
@@ -119,14 +133,12 @@ jobs:
                 -DMARCH_NATIVE=OFF \
                 -DCMAKE_C_FLAGS="-w" \
                 -DCMAKE_CXX_FLAGS="-w" \
-                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
                 ..
 
       - name: Build ASLI
         run: |
           export CFLAGS="-w"
           export CXXFLAGS="-w"
-          export CMAKE_POLICY_VERSION_MINIMUM=3.5
           cd ASLI/build
           make -j$(nproc)
 
