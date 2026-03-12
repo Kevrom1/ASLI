@@ -1,7 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v15 : FIX mmg3d — corrige la syntaxe CMAKE_ARGS(...) → CMAKE_ARGS ...
-#       et injecte CMAKE_POLICY_VERSION_MINIMUM=3.5
+# v17 : FIX mmg3d — remplacement EXACT de CMAKE_ARGS(...) connus
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -82,66 +81,75 @@ jobs:
           fi
 
       # -----------------------------------------------------------------
-      # FIX v15 : corrige le CMakeLists.txt d'ASLI via Python
-      # Problème : CMAKE_ARGS(-D... -D...) → les parenthèses sont parsées
-      #            comme des chemins séparés par CMake moderne
-      # Fix : CMAKE_ARGS(-D...) → CMAKE_ARGS -D... (sans parenthèses)
-      #       + injection de -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      # FIX v17 : remplacement EXACT des CMAKE_ARGS connus dans ASLI CMakeLists.txt
+      # On a le texte exact depuis le source — remplacement chirurgical
       # -----------------------------------------------------------------
-      - name: Fix mmg3d CMAKE_ARGS syntax via Python
+      - name: Fix CMAKE_ARGS syntax in ASLI CMakeLists.txt
         run: |
           python3 - << 'PYEOF'
-          import re
-
           filepath = "ASLI/CMakeLists.txt"
           with open(filepath, "r") as f:
               content = f.read()
 
-          print("=== Original mmg3d block ===")
+          # --- Fix 1: mmg3d CMAKE_ARGS (syntaxe exacte connue) ---
+          OLD_MMG = '''    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DBUILD=MMG3D -DLIBMMG3D_STATIC=ON
+               -DLIBMMG3D_SHARED=OFF -DUSE_ELAS=OFF -DUSE_VTK=OFF -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)'''
+
+          NEW_MMG = '''    CMAKE_ARGS
+               -DCMAKE_BUILD_TYPE=Release
+               -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+               -DBUILD_MMG3D=ON
+               -DLIBMMG3D_STATIC=ON
+               -DLIBMMG3D_SHARED=OFF
+               -DUSE_ELAS=OFF
+               -DUSE_VTK=OFF
+               -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>'''
+
+          if OLD_MMG in content:
+              content = content.replace(OLD_MMG, NEW_MMG)
+              print("SUCCESS: mmg3d CMAKE_ARGS patched")
+          else:
+              print("WARNING: mmg3d exact string not found, trying fallback...")
+              # Fallback: regex sur la structure CMAKE_ARGS(...)
+              import re
+              content, n = re.subn(
+                  r'CMAKE_ARGS\((-DCMAKE_BUILD_TYPE=Release -DBUILD[^\)]+)\)',
+                  lambda m: 'CMAKE_ARGS\n               -DCMAKE_POLICY_VERSION_MINIMUM=3.5\n               ' + m.group(1).replace(' -D', '\n               -D').replace('-DBUILD=MMG3D', '-DBUILD_MMG3D=ON'),
+                  content
+              )
+              print(f"Fallback applied {n} replacements")
+
+          # --- Fix 2: mshmet CMAKE_ARGS ---
+          OLD_MSHMET = '''    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)'''
+          NEW_MSHMET = '''    CMAKE_ARGS
+               -DCMAKE_BUILD_TYPE=Release
+               -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>'''
+
+          if OLD_MSHMET in content:
+              content = content.replace(OLD_MSHMET, NEW_MSHMET)
+              print("SUCCESS: mshmet CMAKE_ARGS patched")
+
+          # --- Fix 3: QASLI CMAKE_ARGS si présent ---
+          OLD_QASLI = '''    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)'''
+          # Déjà remplacé par Fix2 si identique
+
+          with open(filepath, "w") as f:
+              f.write(content)
+
+          # Vérification finale
+          print("\n=== mmg3d ExternalProject block (after patch) ===")
           lines = content.split('\n')
           in_mmg = False
           for i, line in enumerate(lines):
-              if 'ExternalProject_Add' in line and 'MMG' in line:
+              if 'ExternalProject_Add' in line and 'MMG_PREFIX' in line and 'mmg3d' not in line.lower():
+                  pass
+              if 'ExternalProject_Add(${MMG_PREFIX}' in line or ('ExternalProject_Add' in line and 'mmg3d' in line.lower()):
                   in_mmg = True
               if in_mmg:
                   print(f"  {i+1}: {line}")
               if in_mmg and line.strip() == ')':
                   in_mmg = False
                   break
-
-          # Fix 1: CMAKE_ARGS(-D...) → CMAKE_ARGS\n        -D...
-          # Remplace CMAKE_ARGS( par CMAKE_ARGS\n        
-          # et supprime la ) fermante correspondante
-          content_new = re.sub(
-              r'CMAKE_ARGS\((-[^)]+)\)',
-              lambda m: 'CMAKE_ARGS\n        ' + m.group(1).replace(' -D', '\n        -D'),
-              content
-          )
-
-          # Fix 2: injecte POLICY_VERSION_MINIMUM dans le bloc mmg3d
-          content_new = content_new.replace(
-              'CMAKE_ARGS\n        -DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D',
-              'CMAKE_ARGS\n        -DCMAKE_BUILD_TYPE=Release\n        -DCMAKE_POLICY_VERSION_MINIMUM=3.5\n        -DBUILD_MMG3D'
-          )
-
-          # Fix alternatif si le premier ne matche pas
-          if 'POLICY_VERSION_MINIMUM' not in content_new:
-              content_new = content_new.replace(
-                  '-DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D',
-                  '-DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_MMG3D'
-              )
-
-          with open(filepath, "w") as f:
-              f.write(content_new)
-
-          # Vérifie
-          if 'POLICY_VERSION_MINIMUM' in content_new:
-              print("SUCCESS: CMAKE_POLICY_VERSION_MINIMUM injected")
-          else:
-              print("WARNING: injection may have failed, dumping cmake_args lines:")
-              for i, line in enumerate(content_new.split('\n')):
-                  if 'CMAKE_ARGS' in line or 'mmg3d' in line.lower() or 'POLICY' in line:
-                      print(f"  {i+1}: {line}")
           PYEOF
 
       - name: Configure ASLI
