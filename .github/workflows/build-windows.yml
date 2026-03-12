@@ -1,6 +1,7 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v14 : FIX mmg3d — patch chirurgical ligne 126 via Python (pas de sed)
+# v15 : FIX mmg3d — corrige la syntaxe CMAKE_ARGS(...) → CMAKE_ARGS ...
+#       et injecte CMAKE_POLICY_VERSION_MINIMUM=3.5
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -81,11 +82,13 @@ jobs:
           fi
 
       # -----------------------------------------------------------------
-      # FIX v14 : patch CMakeLists.txt via Python pour éviter les
-      # problèmes d'échappement sed avec les parenthèses
-      # On ajoute -DCMAKE_POLICY_VERSION_MINIMUM=3.5 à la ligne mmg3d
+      # FIX v15 : corrige le CMakeLists.txt d'ASLI via Python
+      # Problème : CMAKE_ARGS(-D... -D...) → les parenthèses sont parsées
+      #            comme des chemins séparés par CMake moderne
+      # Fix : CMAKE_ARGS(-D...) → CMAKE_ARGS -D... (sans parenthèses)
+      #       + injection de -DCMAKE_POLICY_VERSION_MINIMUM=3.5
       # -----------------------------------------------------------------
-      - name: Patch mmg3d ExternalProject via Python
+      - name: Fix mmg3d CMAKE_ARGS syntax via Python
         run: |
           python3 - << 'PYEOF'
           import re
@@ -94,31 +97,51 @@ jobs:
           with open(filepath, "r") as f:
               content = f.read()
 
-          old = "-DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D"
-          new = "-DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_MMG3D"
+          print("=== Original mmg3d block ===")
+          lines = content.split('\n')
+          in_mmg = False
+          for i, line in enumerate(lines):
+              if 'ExternalProject_Add' in line and 'MMG' in line:
+                  in_mmg = True
+              if in_mmg:
+                  print(f"  {i+1}: {line}")
+              if in_mmg and line.strip() == ')':
+                  in_mmg = False
+                  break
 
-          if old in content:
-              content = content.replace(old, new, 1)
-              with open(filepath, "w") as f:
-                  f.write(content)
-              print("SUCCESS: Patched mmg3d CMAKE_ARGS in CMakeLists.txt")
+          # Fix 1: CMAKE_ARGS(-D...) → CMAKE_ARGS\n        -D...
+          # Remplace CMAKE_ARGS( par CMAKE_ARGS\n        
+          # et supprime la ) fermante correspondante
+          content_new = re.sub(
+              r'CMAKE_ARGS\((-[^)]+)\)',
+              lambda m: 'CMAKE_ARGS\n        ' + m.group(1).replace(' -D', '\n        -D'),
+              content
+          )
+
+          # Fix 2: injecte POLICY_VERSION_MINIMUM dans le bloc mmg3d
+          content_new = content_new.replace(
+              'CMAKE_ARGS\n        -DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D',
+              'CMAKE_ARGS\n        -DCMAKE_BUILD_TYPE=Release\n        -DCMAKE_POLICY_VERSION_MINIMUM=3.5\n        -DBUILD_MMG3D'
+          )
+
+          # Fix alternatif si le premier ne matche pas
+          if 'POLICY_VERSION_MINIMUM' not in content_new:
+              content_new = content_new.replace(
+                  '-DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D',
+                  '-DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_MMG3D'
+              )
+
+          with open(filepath, "w") as f:
+              f.write(content_new)
+
+          # Vérifie
+          if 'POLICY_VERSION_MINIMUM' in content_new:
+              print("SUCCESS: CMAKE_POLICY_VERSION_MINIMUM injected")
           else:
-              print("WARNING: Pattern not found, trying fallback...")
-              # Fallback: cherche CMAKE_ARGS dans le bloc mmg3d
-              old2 = "CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DBUILD_MMG3D"
-              new2 = "CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_MMG3D"
-              if old2 in content:
-                  content = content.replace(old2, new2, 1)
-                  with open(filepath, "w") as f:
-                      f.write(content)
-                  print("SUCCESS: Patched via fallback")
-              else:
-                  print("ERROR: Could not find mmg3d CMAKE_ARGS pattern")
-                  # Affiche les lignes autour de mmg3d pour debug
-                  lines = content.split('\n')
-                  for i, line in enumerate(lines):
-                      if 'mmg3d' in line.lower() or 'CMAKE_ARGS' in line:
-                          print(f"  Line {i+1}: {line}")
+              print("WARNING: injection may have failed, dumping cmake_args lines:")
+              for i, line in enumerate(content_new.split('\n')):
+                  if 'CMAKE_ARGS' in line or 'mmg3d' in line.lower() or 'POLICY' in line:
+                      print(f"  {i+1}: {line}")
           PYEOF
 
       - name: Configure ASLI
