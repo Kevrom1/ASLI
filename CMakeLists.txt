@@ -1,4 +1,4 @@
- # ============================================================================
+# ============================================================================
  #  This file is part of ASLI (A Simple Lattice Infiller)
  #  Copyright (C) KU Leuven, 2019-2024
  #
@@ -123,8 +123,15 @@ endif()
     BUILD_ALWAYS OFF
     INSTALL_DIR  ${MMG_INSTALL_DIR}
 
-    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DBUILD=MMG3D -DLIBMMG3D_STATIC=ON
-               -DLIBMMG3D_SHARED=OFF -DUSE_ELAS=OFF -DUSE_VTK=OFF -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)
+    CMAKE_ARGS
+               -DCMAKE_BUILD_TYPE=Release
+               -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+               -DBUILD_MMG3D=ON
+               -DLIBMMG3D_STATIC=ON
+               -DLIBMMG3D_SHARED=OFF
+               -DUSE_ELAS=OFF
+               -DUSE_VTK=OFF
+               -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
 
     BUILD_COMMAND   make
     INSTALL_COMMAND make install
@@ -148,7 +155,9 @@ endif()
     BINARY_DIR ${MSHMET_INSTALL_DIR}
     INSTALL_DIR  ${MSHMET_INSTALL_DIR}
 
-    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)
+    CMAKE_ARGS
+               -DCMAKE_BUILD_TYPE=Release
+               -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
   )
   set(MSHMET_INCLUDE_DIRS "${MSHMET_INSTALL_DIR}/include")
   set(MSHMET_LIBRARIES "${MSHMET_INSTALL_DIR}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}${MSHMET_PREFIX}${CMAKE_STATIC_LIBRARY_SUFFIX}")
@@ -280,7 +289,9 @@ if(ASLI_GUI)
     BUILD_ALWAYS OFF
     INSTALL_DIR ${QASLI_INSTALL_DIR}
 
-    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)
+    CMAKE_ARGS
+               -DCMAKE_BUILD_TYPE=Release
+               -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
   )
 endif()
 
