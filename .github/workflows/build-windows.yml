@@ -1,6 +1,6 @@
 # =============================================================================
 # GitHub Actions — Build ASLI + QASLI on Windows
-# v17 : FIX mmg3d — remplacement EXACT de CMAKE_ARGS(...) connus
+# v18 : simplifié — CMakeLists.txt corrigé directement dans le fork
 # =============================================================================
 
 name: Build ASLI + QASLI (Windows GUI)
@@ -51,10 +51,9 @@ jobs:
             mingw-w64-x86_64-qt5-base
             mingw-w64-x86_64-qt5-tools
             mingw-w64-x86_64-qt5-3d
-            mingw-w64-x86_64-python
 
       # -----------------------------------------------------------------
-      # Patch AdaptTools (C legacy)
+      # Patch AdaptTools (C legacy — implicit function declarations)
       # -----------------------------------------------------------------
       - name: Patch AdaptTools legacy C files
         run: |
@@ -70,7 +69,7 @@ jobs:
           done
 
       # -----------------------------------------------------------------
-      # Patch emitterutils.cpp
+      # Patch emitterutils.cpp (yaml-cpp missing cstdint)
       # -----------------------------------------------------------------
       - name: Patch emitterutils.cpp
         run: |
@@ -80,82 +79,8 @@ jobs:
             echo "Patched: $FILE"
           fi
 
-      # -----------------------------------------------------------------
-      # FIX v17 : remplacement EXACT des CMAKE_ARGS connus dans ASLI CMakeLists.txt
-      # On a le texte exact depuis le source — remplacement chirurgical
-      # -----------------------------------------------------------------
-      - name: Fix CMAKE_ARGS syntax in ASLI CMakeLists.txt
-        run: |
-          python3 - << 'PYEOF'
-          filepath = "ASLI/CMakeLists.txt"
-          with open(filepath, "r") as f:
-              content = f.read()
-
-          # --- Fix 1: mmg3d CMAKE_ARGS (syntaxe exacte connue) ---
-          OLD_MMG = '''    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DBUILD=MMG3D -DLIBMMG3D_STATIC=ON
-               -DLIBMMG3D_SHARED=OFF -DUSE_ELAS=OFF -DUSE_VTK=OFF -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)'''
-
-          NEW_MMG = '''    CMAKE_ARGS
-               -DCMAKE_BUILD_TYPE=Release
-               -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-               -DBUILD_MMG3D=ON
-               -DLIBMMG3D_STATIC=ON
-               -DLIBMMG3D_SHARED=OFF
-               -DUSE_ELAS=OFF
-               -DUSE_VTK=OFF
-               -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>'''
-
-          if OLD_MMG in content:
-              content = content.replace(OLD_MMG, NEW_MMG)
-              print("SUCCESS: mmg3d CMAKE_ARGS patched")
-          else:
-              print("WARNING: mmg3d exact string not found, trying fallback...")
-              # Fallback: regex sur la structure CMAKE_ARGS(...)
-              import re
-              content, n = re.subn(
-                  r'CMAKE_ARGS\((-DCMAKE_BUILD_TYPE=Release -DBUILD[^\)]+)\)',
-                  lambda m: 'CMAKE_ARGS\n               -DCMAKE_POLICY_VERSION_MINIMUM=3.5\n               ' + m.group(1).replace(' -D', '\n               -D').replace('-DBUILD=MMG3D', '-DBUILD_MMG3D=ON'),
-                  content
-              )
-              print(f"Fallback applied {n} replacements")
-
-          # --- Fix 2: mshmet CMAKE_ARGS ---
-          OLD_MSHMET = '''    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)'''
-          NEW_MSHMET = '''    CMAKE_ARGS
-               -DCMAKE_BUILD_TYPE=Release
-               -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>'''
-
-          if OLD_MSHMET in content:
-              content = content.replace(OLD_MSHMET, NEW_MSHMET)
-              print("SUCCESS: mshmet CMAKE_ARGS patched")
-
-          # --- Fix 3: QASLI CMAKE_ARGS si présent ---
-          OLD_QASLI = '''    CMAKE_ARGS(-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>)'''
-          # Déjà remplacé par Fix2 si identique
-
-          with open(filepath, "w") as f:
-              f.write(content)
-
-          # Vérification finale
-          print("\n=== mmg3d ExternalProject block (after patch) ===")
-          lines = content.split('\n')
-          in_mmg = False
-          for i, line in enumerate(lines):
-              if 'ExternalProject_Add' in line and 'MMG_PREFIX' in line and 'mmg3d' not in line.lower():
-                  pass
-              if 'ExternalProject_Add(${MMG_PREFIX}' in line or ('ExternalProject_Add' in line and 'mmg3d' in line.lower()):
-                  in_mmg = True
-              if in_mmg:
-                  print(f"  {i+1}: {line}")
-              if in_mmg and line.strip() == ')':
-                  in_mmg = False
-                  break
-          PYEOF
-
       - name: Configure ASLI
         run: |
-          export CFLAGS="-w"
-          export CXXFLAGS="-w"
           cd ASLI
           mkdir -p build
           cd build
@@ -168,8 +93,6 @@ jobs:
 
       - name: Build ASLI
         run: |
-          export CFLAGS="-w"
-          export CXXFLAGS="-w"
           cd ASLI/build
           make -j$(nproc)
 
